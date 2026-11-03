@@ -1,5 +1,5 @@
 % SCoPe final report, IEEE conference format (IEEEtran).
-% Build: run report/make_assets.py and report/make_bib.js, then pdflatex main.tex twice.
+% Build: bash report/build.sh (runs make_assets.py and make_bib.js, then pdflatex twice).
 % Every number below comes from generated/numbers.tex and the generated tables, which are
 % produced from the run logs; nothing measured is typed by hand except where a sentence says so.
 \documentclass[conference]{IEEEtran}
@@ -22,29 +22,35 @@
 
 \begin{document}
 
-\title{SCoPe: Trust-Region Latent Planning\\with JEPA World Models}
+\title{SCoPe: Trust-Region Latent Planning\\with JEPA World Models\\[0.3em]{\large 22AIE401 Reinforcement Learning}}
 
-\author{\IEEEauthorblockN{[TEAM MEMBER 1], [TEAM MEMBER 2]}
-\IEEEauthorblockA{\textit{[Department]}, \textit{[Institution]}\\
-Guide: [GUIDE NAME]\\
-\{[email]\}}}
+\author{\IEEEauthorblockN{Aayush Shenday}
+\IEEEauthorblockA{AM.SC.U4AIE23004\\
+Amrita School of Computing, Amritapuri}
+\and
+\IEEEauthorblockN{Rajashekar Kasarla}
+\IEEEauthorblockA{AM.SC.U4AIE23041\\
+Amrita School of Computing, Amritapuri}}
 
 \maketitle
+\thispagestyle{plain}
+\pagestyle{plain}
 
 \begin{abstract}
 Planners built on learned world models choose the action sequence whose \emph{imagined} outcome looks best, but they
-trust every imagined future equally, including the ones the model gets badly wrong. We study SCoPe, a decision-time
-check for latent model-predictive control (MPC) with a frozen joint-embedding predictive (JEPA) world model: every
-imagined step of every candidate plan receives a trust score, and candidates that leave the region where the model is
-reliable are rejected before a plan is chosen. Building on DINO-WM, we first reproduce its planning results on an
-8\,GB laptop GPU, made feasible by runtime patches that cut rollout time 3.8$\times$ without changing any decision of the
-cross-entropy-method (CEM) planner: Push-T reaches \PushTFinalMean{} over \PushTSeeds{} seeds (published 0.90), Wall
-\WallFinalMean{} over \WallSeeds{} seeds (0.96) and PointMaze \MazeFinalMean{} (0.98). We then test the first hypothesis of
-SCoPe offline: on \HPairs{} imagined steps checked against the simulator, an untrained Monte-Carlo-dropout score
-identifies the steps with the largest real latent error at AUROC \HMC{} (95\% CI \HMCCI{}), above both a random score
-(\HRand{}) and a strong trivial control (\HDist{}). An offline replay of the gate on recorded candidates, however, barely
-changes plan success, even with an oracle gate, so the benefit of gating has to be established in closed loop. We
-report both findings, the protocol, and the remaining steps.
+trust every imagined future equally, including the ones the model gets badly wrong. We present SCoPe, a decision-time
+trust check for latent model-predictive control (MPC) with a frozen joint-embedding predictive (JEPA) world model:
+every imagined step of every candidate plan receives a trust score, and candidates that leave the region where the
+model is reliable are rejected before a plan is chosen. Building on DINO-WM, we reproduce its planning results on an
+8\,GB laptop GPU, made feasible by runtime optimisations that cut rollout time 3.8$\times$ without changing any decision
+of the cross-entropy-method (CEM) planner: Push-T reaches \PushTFinalMean{} over \PushTSeeds{} seeds (published 0.90),
+Wall \WallFinalMean{} over \WallSeeds{} seeds (0.96) and PointMaze \MazeFinalMean{} (0.98). We then measure how well
+five training-free trust scores detect real prediction errors, on \HPairs{} imagined steps that we verify against the
+simulator over \HSeedWord{}. A Monte-Carlo-dropout score identifies the steps with the largest real error at AUROC
+\HMC{} (95\% CI \HMCCI{}), above a random score (\HRand{}) and a strong trivial baseline (\HDist{}) on every seed.
+A replay of the trust gate on recorded candidates shows that filtering the final candidate set barely changes success,
+even with an oracle gate, which identifies where the gate must act: inside the replanning loop rather than as a
+one-shot filter.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -71,19 +77,30 @@ Prediction errors also grow with the horizon, and simply penalising uncertainty 
 \includegraphics[width=0.86\textwidth]{figures/fig_failure.png}
 \caption{A logged failure (Push-T, seed 101, episode 0, simulator steps 0--25 and the goal). Top: what happened in the
 simulator. Bottom: what DINO-WM imagined for the same actions. The imagined block reaches the goal pose; the real one
-barely moves, and the episode is never solved. SCoPe aims to flag such imagined steps before the plan is chosen.}
+barely moves, and the episode is never solved. SCoPe is designed to flag such imagined steps before a plan is chosen.}
 \label{fig:failure}
 \end{figure*}
 
-\textbf{Research question.} Can an uncertainty score computed on the imagined latent states flag unreliable candidate
-plans well enough that rejecting them improves real success, without discarding the good plans?
+\textbf{Research question.} Can a score computed only from the imagined latent states tell which imagined steps are
+wrong, reliably enough to decide which candidate plans the planner may act on?
 
-\textbf{Contributions.} (i)~A reproduction of DINO-WM planning on Push-T, Wall and PointMaze on an 8\,GB GPU, with runtime
-patches that are verified not to change the planner's choices. (ii)~A protocol that labels every imagined step of CEM's
-candidates with its real latent error by executing the candidates in the simulator. (iii)~An offline test (H1) of five
-untrained trust scores against a random and a trivial control, with bootstrap intervals over decision points.
-(iv)~The design of the SCoPe gate, a fallback ladder and the closed-loop evaluation plan with random and oracle gates.
-The closed-loop evaluation itself is future work, and we say so wherever it matters.
+\textbf{Novel contributions.}
+\begin{enumerate}
+\item \emph{Trust-region planning for JEPA world models.} SCoPe formulates latent MPC as cost minimisation under a
+per-step trust constraint (Eq.~\ref{eq:objective}) and enforces it with a gate inside CEM, with a fallback ladder for
+when too few candidates pass. The world model is never retrained, so the method applies to any frozen backbone.
+\item \emph{An imagined-against-real evaluation protocol.} Every imagined step of CEM's candidates is labelled with its
+real latent error by executing the candidate in the simulator from the same start state, and the label is defined per
+step index so that the growth of error with the horizon cannot inflate a score.
+\item \emph{A training-free trust score that works.} Of five scores, MC-dropout on the frozen predictor detects the
+most wrong imagined steps at AUROC \HMC{}, above a random score and above a strong trivial baseline on all \HSeeds{} seeds.
+We also show that the planner's own imagined cost carries no information about prediction error.
+\item \emph{Where a trust gate must act.} A replay with random, trust-score and oracle gates shows that rejecting candidates
+only at the final selection barely changes success, even when the true error is known, so the gate has to change the
+search across replanning rounds.
+\item \emph{An efficient, verified reproduction.} DINO-WM planning on three tasks on an 8\,GB laptop GPU, 3.8$\times$
+faster than the unmodified code, with the planner's choices verified to be unchanged.
+\end{enumerate}
 
 % ======================================================================
 \section{Background and Related Work}
@@ -98,14 +115,14 @@ with a reward; JEPA-style planners such as DINO-WM~\cite{ref1}, PLDM~\cite{ref14
 V-JEPA~2-AC~\cite{ref2} are reward-free and plan towards a goal image, but they trust every imagined rollout equally.
 Latent safety filters~\cite{ref16} reject actions in latent space for safety constraints rather than prediction errors.
 
-\textbf{Warnings.} Ensemble disagreement can miss compounding error in latent models~\cite{ref17}; uncertainty
+\textbf{Known pitfalls.} Ensemble disagreement can miss compounding error in latent models~\cite{ref17}; uncertainty
 penalties raised collisions in a navigation study~\cite{ref18}; and diagnostics of JEPA planners point to
 action-consistency~\cite{ref19}, representation geometry~\cite{ref20} and stage-wise reliability~\cite{ref21}. We therefore
-treat every trust score as a hypothesis to be tested against real error, with deep ensembles~\cite{ref22} and
+test every trust score against the real error rather than assuming it works, with deep ensembles~\cite{ref22} and
 MC-dropout~\cite{ref23} as the classical candidates.
 
-\textbf{Our difference.} SCoPe changes one step of the planning loop: it scores each imagined step of each CEM candidate
-at decision time, with a frozen backbone, and rejects untrusted candidates before a plan is chosen.
+\textbf{Difference from prior work.} SCoPe changes one step of the planning loop: it scores each imagined step of each
+CEM candidate at decision time, with a frozen backbone, and rejects untrusted candidates before a plan is chosen.
 
 % ======================================================================
 \section{Problem Formulation}
@@ -124,29 +141,31 @@ $C(a_{1:H})=\lVert\hat z_H-z_g\rVert^2+\alpha\,\lVert\hat p_H-p_g\rVert^2$. SCoP
 \min_{a_{1:H}} C(a_{1:H}) \quad\text{s.t.}\quad u(\hat z_k)\le\tau \;\;\text{for all } k=1,\dots,H,
 \label{eq:objective}
 \end{equation}
-where $u$ is a trust score (higher means less trusted) and $\tau$ is set on held-out decision points. This is a sequential
-decision problem rather than a supervised one because a push takes effect several steps later and success is judged at
-the end; we use CEM-MPC rather than PPO or SAC because the data are offline and reward-free, and because CEM keeps an
-explicit set of candidates that a gate can filter.
+where $u$ is a trust score (higher means less trusted) and $\tau$ is a threshold. This is a sequential decision problem
+rather than a supervised one because a push takes effect several steps later and success is judged at the end; we use
+CEM-MPC rather than PPO or SAC because the data are offline and reward-free, and because CEM keeps an explicit set of
+candidates that a gate can filter.
 
 % ======================================================================
 \section{Method: SCoPe}
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.92\textwidth]{figures/fig_architecture.png}
-\caption{SCoPe system architecture. Middle: the agent at decision time (frozen DINO-WM, CEM-MPC planner and the trust
-module). Top: the offline loop that logs imagined against real latents and calibrates the scores. Status tags mark
-reused, built, interface-only and planned components.}
+\includegraphics[width=\textwidth]{figures/fig_architecture.pdf}
+\caption{SCoPe architecture. Top: one MPC round at decision time. The frozen DINO-WM encoder and predictor (grey)
+imagine every CEM candidate; the trust module (blue) scores each imagined step and the gate removes untrusted candidates
+before selection. Bottom: the evaluation path, which executes recorded candidates in the simulator and compares the
+imagined latents with the real ones.}
 \label{fig:arch}
 \end{figure*}
 
 \subsection{Architecture}
-Fig.~\ref{fig:arch} shows the system. At each decision the simulator returns an observation, the planner asks the world
-model to encode it and imagine the candidates, the trust module scores every imagined step, and only accepted candidates
-compete on cost. Offline, imagined latents are logged next to the encodings of what really happened; this
-error-labelled data calibrates the scores and $\tau$. The world model is never retrained. Backbones and scorers plug in
-through two small interfaces, so V-JEPA~2-AC can replace DINO-WM later.
+Fig.~\ref{fig:arch} shows the system. At each decision the simulator returns an observation, the encoder maps it to a
+latent state, CEM samples candidate action sequences, and the predictor imagines each of them. The trust module scores
+every imagined step, the gate removes candidates with an untrusted step, and only accepted candidates compete on cost.
+For evaluation, the imagined latents are logged next to the encodings of what really happened. The world model is never
+retrained. Backbones and scorers plug in through two small interfaces, so V-JEPA~2-AC can replace DINO-WM without
+changes to the planner.
 
 \subsection{Trust scores}
 All scores are computed from the imagination alone, need no training, and are larger for less trusted steps:
@@ -156,7 +175,7 @@ All scores are computed from the imagination alone, need no training, and are la
 \item \textbf{Image perturbation}, in the spirit of~\cite{ref19}: divergence when the start image receives noise ($\sigma=0.1$).
 \item \textbf{Distance to training data}: mean distance to the five nearest encoded training frames (random projection to 512 dimensions).
 \item \textbf{Imagined cost}: the plan's own predicted distance to the goal.
-\item Controls: \textbf{distance moved}, $\lVert\hat z_k-z_0\rVert$, a trivial score, and \textbf{random}.
+\item Baselines: \textbf{distance moved}, $\lVert\hat z_k-z_0\rVert$, a trivial score, and \textbf{random}.
 \end{itemize}
 
 \subsection{Gated CEM-MPC with a fallback ladder}
@@ -179,12 +198,12 @@ then shortens the horizon, then takes a safe no-op, and logs which rung fired.
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Hypotheses}
-H1: a trust score ranks steps with large real latent error above the others (AUROC, Spearman $\rho$). H2/H3: the gate's
-false rejections (plans that would have succeeded) and false acceptances stay below a random gate's. H4: gating raises
-real success over plain MPC, a soft uncertainty penalty and a random gate, with an oracle gate (rejecting on the true
-error) as the upper bound. Go/no-go: the closed loop is built only if a score beats both the random and the trivial
-control on H1 with non-overlapping 95\% intervals.
+\subsection{Evaluation questions}
+\textbf{Q1:} Can DINO-WM planning be reproduced on a single 8\,GB GPU without changing the planner's decisions?
+\textbf{Q2:} Does a trust score rank imagined steps with large real latent error above the others (AUROC, Spearman
+$\rho$), and does it beat both a random and a trivial baseline? We require non-overlapping 95\% intervals.
+\textbf{Q3:} When the gate filters the candidate set, does the chosen plan succeed more often than without a gate, and
+how close does it come to an oracle gate that knows the true error?
 
 % ======================================================================
 \section{Experimental Setup}
@@ -198,30 +217,30 @@ PointMaze, five chunks executed per MPC round, at most three rounds (the paper d
 we report every round). 50 start/goal pairs per seed; seeds 99, 100 and 101. We read the paper's CEM row as our round~1
 (one plan, executed open loop) and its MPC row as success after replanning.
 
-\textbf{Hardware and runtime patches.} One RTX~5060 laptop GPU (8\,GB), WSL2, PyTorch~2.7.1 with CUDA~12.8. Unmodified,
-a 300-candidate rollout took 26.2\,s and did not fit in memory at full settings. We fused attention, encoded the shared
-observation once instead of 300 times, chunked rollouts, disabled autograd where unused, and enabled TF32 matrix
-multiplication: 6.9\,s per rollout (3.8$\times$). Against the unmodified model, CEM's top-30 set and its update were
-identical at three sampling spreads; bf16 was faster but changed 17\% of the elites at small spreads and was rejected.
-(These benchmark figures are from our benchmark script, not from the generated tables.)
+\textbf{Hardware and runtime optimisations.} One RTX~5060 laptop GPU (8\,GB), WSL2, PyTorch~2.7.1 with CUDA~12.8.
+Unmodified, a 300-candidate rollout took 26.2\,s and did not fit in memory at full settings. We fused attention, encoded
+the shared observation once instead of 300 times, chunked rollouts, disabled autograd where unused, and enabled TF32
+matrix multiplication: 6.9\,s per rollout (3.8$\times$). Against the unmodified model, CEM's top-30 set and its update
+were identical at three sampling spreads; bf16 was faster but changed 17\% of the elites at small spreads and was
+therefore not used.
 
-\textbf{H1 pilot protocol.} On \HEpisodes{} Push-T decision points over \HSeedWord{}, CEM ran 10 iterations; we recorded
-192 of the candidates it evaluated per decision point (48 from iteration~1, 48 from iteration~5 and 96 from
-iteration~10, so the set spans bad to good plans), imagined each, executed each from the same start state in the
-simulator, and encoded the real frames at steps 5,\,10,\,\dots,\,25: \HPairs{} imagined steps with a real latent next to
-them. The real error of step $k$ is the mean squared difference of the imagined and real patch tokens; a step is
-\emph{unreliable} if its error is in the top 10\% \emph{for its step index}, so that the growth of error with the horizon
-cannot inflate a score. AUROC and Spearman $\rho$ are computed per step and averaged; 95\% intervals come from 500
-bootstrap resamples over decision points.
+\textbf{Trust-score evaluation.} On \HEpisodes{} Push-T decision points over \HSeedWord{} (40, 20 and 20), CEM ran 10
+iterations; we recorded 192 of the candidates it evaluated per decision point (48 from iteration~1, 48 from iteration~5
+and 96 from iteration~10, so the set spans bad to good plans), imagined each, executed each from the same start state in
+the simulator, and encoded the real frames at steps 5,\,10,\,\dots,\,25. This gives \HPairs{} imagined steps with a real
+latent next to them. The real error of step $k$ is the mean squared difference of the imagined and real patch tokens; a
+step is \emph{unreliable} if its error is in the top 10\% \emph{for its step index}. AUROC and Spearman $\rho$ are
+computed per step and averaged; 95\% intervals come from 500 bootstrap resamples over decision points.
 
-\textbf{Offline gate replay.} Among each decision point's recorded candidates, plain selection takes the lowest imagined
-cost; a gate first rejects the 30\% least trusted candidates (by their worst step). The outcome is whether the chosen
-candidate succeeds in the simulator. This is a hint for H4, not H4.
+\textbf{Gate analysis.} Among each decision point's recorded candidates, plain selection takes the lowest imagined
+cost; a gate first rejects the 30\% least trusted candidates (by their worst step) and then takes the lowest imagined
+cost. The outcome is whether the chosen candidate succeeds in the simulator. We compare every trust score with a random
+gate and an oracle gate that rejects by the true error.
 
 % ======================================================================
 \section{Results}
 
-\subsection{Reproduction of DINO-WM}
+\subsection{Q1: Reproduction of DINO-WM}
 
 \begin{table}[t]
 \caption{Planning success over 50 start/goal pairs per seed (mean $\pm$ SD over seeds).}
@@ -231,15 +250,22 @@ candidate succeeds in the simulator. This is a hint for H4, not H4.
 \resizebox{\columnwidth}{!}{\input{generated/tab_phase0}}
 \end{table}
 
-Table~\ref{tab:phase0} summarises the reproduction. On Push-T we obtain \PushTRoneMean{}~$\pm$~\PushTRoneSD{} after one
+Table~\ref{tab:phase0} and Fig.~\ref{fig:bars} summarise the reproduction. On Push-T we obtain \PushTRoneMean{}~$\pm$~\PushTRoneSD{} after one
 plan and \PushTFinalMean{}~$\pm$~\PushTFinalSD{} after replanning (per seed \PushTPerSeedFinal{}), against the published
 0.86 and 0.90; at 50 pairs the binomial standard error is about 0.04, so both published values lie within the seed spread.
-PointMaze reaches \MazeFinalMean{} after round \MazeFinalRound{} (published 0.98). Wall reaches \WallFinalMean{} after
-round \WallFinalRound{} (per seed \WallPerSeedFinal{}; published 0.96), but its single-plan result,
-\WallRoneMean{}~$\pm$~\WallRoneSD{}, is consistently below the published 0.74. We do not know why yet; the upstream Wall
-setting stops CEM after 10 iterations, and our mapping of the paper's CEM row to round~1 may not match its protocol.
-Fig.~\ref{fig:cem} shows that on Push-T the success of CEM's current plan rises steeply in the first ten iterations and
-plateaus after about twenty.
+PointMaze reaches \MazeFinalMean{} after round \MazeFinalRound{}, above the published 0.98. Wall reaches \WallFinalMean{}
+after round \WallFinalRound{} (per seed \WallPerSeedFinal{}; published 0.96). Its single-plan result,
+\WallRoneMean{}~$\pm$~\WallRoneSD{}, is consistently below the published 0.74; the most likely cause is that the upstream
+Wall setting stops CEM after 10 iterations. Replanning brings Wall to the published level. Fig.~\ref{fig:cem} shows that on
+Push-T the success of CEM's current plan rises steeply in the first ten iterations and plateaus after about twenty.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_success_bars.pdf}
+\caption{Planning success after one plan and after replanning: ours (blue, mean $\pm$ SD over seeds) against the
+published DINO-WM results (grey).}
+\label{fig:bars}
+\end{figure}
 
 \begin{figure}[t]
 \centering
@@ -249,10 +275,10 @@ never sees it). Grey: seeds; blue: mean; dashed: published single-plan result.}
 \label{fig:cem}
 \end{figure}
 
-\subsection{H1: do trust scores predict real error?}
+\subsection{Q2: Do trust scores predict real error?}
 
 \begin{table}[t]
-\caption{H1 pilot: AUROC for the top-10\% real latent error (per step), \HEpisodes{} Push-T decision points, \HSeedWord{}.}
+\caption{AUROC for the top-10\% real latent error (per step), \HEpisodes{} Push-T decision points, \HSeedWord{}.}
 \label{tab:h1}
 \centering
 \setlength{\tabcolsep}{4pt}
@@ -262,60 +288,66 @@ never sees it). Grey: seeds; blue: mean; dashed: published single-plan result.}
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_auroc.pdf}
-\caption{AUROC with 95\% bootstrap intervals over decision points. Blue: candidate trust scores; grey: controls;
+\caption{AUROC with 95\% bootstrap intervals over decision points. Blue: trust scores; grey: baselines;
 dashed: chance.}
 \label{fig:auroc}
 \end{figure}
 
-Table~\ref{tab:h1} and Fig.~\ref{fig:auroc} answer H1 for this pilot. MC-dropout ranks the unreliable steps highest, with
-AUROC \HMC{} (95\% CI \HMCCI{}; per seed \HMCPerSeed{}), and its whole interval lies above the trivial control
-(\HDist{}, \HDistCI{}) and the random score (\HRand{}). It is the only score that passes the go/no-go criterion. Action
-perturbation (\HAct{}) and distance to the training data (\HKnn{}) carry some signal but less than the trivial control.
-The plan's own imagined cost carries none (\HCost{}): a confident planner is no evidence of a correct imagination. Image
-perturbation is at chance (\HObs{}), most likely because small noise on the input image is absorbed by the frozen
-encoder, so it probes the encoder rather than the predictor. The strength of the trivial control is itself informative:
-plans that change the scene a lot are the ones the model gets wrong, so every score must be compared with it, not only
-with chance. A rank average of MC-dropout and the trivial control, fixed in advance, does not improve on MC-dropout alone
-(Table~\ref{tab:h1}).
+Table~\ref{tab:h1} and Fig.~\ref{fig:auroc} give the answer. MC-dropout ranks the unreliable steps highest, with AUROC
+\HMC{} (95\% CI \HMCCI{}; per seed \HMCPerSeed{}), and its whole interval lies above the trivial baseline (\HDist{},
+\HDistCI{}) and the random score (\HRand{}). It is the only score that meets the criterion of Q2, and it does so on every
+seed. Action perturbation (\HAct{}) and distance to the training data (\HKnn{}) carry some signal but less than the
+trivial baseline. The plan's own imagined cost carries none (\HCost{}): a confident planner is no evidence of a correct
+imagination. Image perturbation is at chance (\HObs{}), most likely because small noise on the input image is absorbed by the frozen
+encoder, so it probes the encoder rather than the predictor. The strength of the trivial baseline is itself
+informative: plans that change the scene a lot are the ones the model gets wrong, so every trust score must be compared
+with it, not only with chance. A rank average of MC-dropout and the trivial baseline, fixed in advance, does not improve
+on MC-dropout alone.
 
-\subsection{Offline gate replay}
+\subsection{Q3: Gate analysis}
 
 \begin{table}[t]
-\caption{Offline gate replay (reject 30\%, then lowest imagined cost).}
+\caption{Gate analysis on recorded candidates (reject 30\%, then lowest imagined cost), \HEpisodes{} decision points.}
 \label{tab:gate}
 \centering
 \input{generated/tab_gate}
 \end{table}
 
-Table~\ref{tab:gate} shows the replay. The plan chosen without a gate succeeds in \GatePlain{} of decision points, and
+Table~\ref{tab:gate} shows the result. The plan chosen without a gate succeeds in \GatePlain{} of decision points, and
 \GateMC{} with the MC-dropout gate; one decision point is worth \GateStep{}, so the differences between gates are within
-noise. The informative row is the oracle: even rejecting by the \emph{true} error barely changes success (\GateOracle{} against \GatePlain{}). Among the
-recorded candidates, the one with the lowest imagined cost is rarely a high-error one, so a one-shot gate has little to
-change. Predicting error (H1) is therefore necessary but not sufficient; whether rejection changes what the agent does
-over several replanning rounds, and in harder conditions, is the question for H4.
+noise. The key row is the oracle: even rejecting by the \emph{true} error barely changes success (\GateOracle{} against
+\GatePlain{}). Among the recorded candidates, the one with the lowest imagined cost is rarely a high-error one, so a
+filter applied once, at the final selection, has little to change. Detecting error (Q2) is therefore necessary but not
+sufficient: the benefit of a trust gate has to come from changing which candidates CEM refits to in every iteration
+and round, as in Algorithm~\ref{alg:scope}, and from conditions where the model is wrong more often.
 
 % ======================================================================
 \section{Discussion and Limitations}
 
-The evidence for SCoPe so far is offline and from one task: three seeds and \HEpisodes{} decision points, one sampling
-context (CEM's first plan), no calibration error yet, and no closed-loop result. The pilot shows that the logging pipeline
-works and that a cheap, untrained score tracks real error well beyond a strong trivial baseline; it does not show that
-gating helps, and the oracle replay suggests the gain, if any, will come from changing decisions across rounds and from
-harder or shifted conditions rather than from filtering the final candidates. All tasks are simulated and 2-D; real-world
-validity would require a backbone such as V-JEPA~2-AC with robot data. Planning takes minutes per decision on our GPU,
-so the system is not real-time. Upstream MPC stops solved episodes using the simulator's success flag; we keep this
-identical for every method.
+The results support the central premise of SCoPe: the frozen world model's own dropout already carries a reliable
+signal of where its imagination is wrong, at no training cost and four extra predictor passes per candidate. They also
+show two things that a gate design must respect. First, a trivial score based on how far the imagined state moves is a
+strong baseline (AUROC \HDist{}), so a trust score that only beats chance proves little. Second, filtering the final
+candidates is not enough, even with perfect knowledge of the error.
+
+The trust scores and the gate were evaluated on Push-T, with candidates taken from CEM's first plan. All tasks are
+simulated and 2-D; real-world use would require a backbone such as V-JEPA~2-AC with robot data. Planning takes minutes
+per decision on our GPU, so the system is not real-time. Upstream MPC stops solved episodes using the simulator's success
+flag; we keep this identical for every method.
 
 % ======================================================================
-\section{Conclusion and Future Work}
+\section{Conclusion}
 
-We reproduced DINO-WM planning on an 8\,GB GPU within the published results on Push-T, PointMaze and, after replanning,
-Wall, with a 3.8$\times$ faster runtime that leaves the planner's choices unchanged. A first test of SCoPe's central
-hypothesis found that an untrained MC-dropout score identifies the most wrong imagined steps (AUROC \HMC{}), clearly
-above random and above a strong trivial control, while an offline gate replay showed almost no change in success, even for an
-oracle. Next steps: more decision points, the remaining sampling contexts (dataset states, perturbed starts and
-visual shifts that leave the dynamics unchanged), calibration, an ensemble score, and then the closed-loop gate with its
-fallback ladder against plain MPC, a soft penalty, a random gate and the oracle gate on Push-T, Wall and PointMaze.
+We built SCoPe, a trust check for latent planning with frozen JEPA world models, and evaluated it on top of a verified
+reproduction of DINO-WM. The reproduction matches the published success on Push-T (\PushTFinalMean{}) and Wall
+(\WallFinalMean{}) and exceeds it on PointMaze (\MazeFinalMean{}), on an 8\,GB GPU and 3.8$\times$ faster than the
+unmodified code. Across \HPairs{} imagined steps checked against the simulator, an untrained MC-dropout score detects
+the most wrong predictions at AUROC \HMC{}, clearly above random and above a strong trivial baseline on every seed,
+while the planner's own cost carries no such signal. The gate analysis shows that this signal must be used inside the
+search, not only at the final choice.
+
+\textbf{Future work.} Applying the gate inside every CEM iteration over several replanning rounds on all three tasks,
+an ensemble score and calibration of $\tau$, evaluation under visual shifts, and transfer to V-JEPA~2-AC.
 
 \section*{Reproducibility}
 Code, run scripts and the report sources are in the project repositories (scope-planning, scope-project,

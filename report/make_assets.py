@@ -8,7 +8,7 @@ Inputs (all produced by the run scripts, never typed by hand):
                                               falls back to h1_pilot_summary.json (seed 1 only)
 Outputs:
   report/generated/numbers.tex, tab_phase0.tex, tab_h1.tex, tab_gate.tex
-  report/figures/fig_auroc.pdf, fig_cem.pdf
+  report/figures/fig_auroc.pdf, fig_cem.pdf, fig_architecture.pdf (drawn by fig_arch.py)
 """
 import json
 import shutil
@@ -88,7 +88,7 @@ for env in ["pusht", "wall", "point_maze"]:
 # ---------------------------------------------------------------- H1 tables and macros
 ORDER = [("mc_dropout", "MC-dropout (4 passes)"), ("act_perturb", "Action perturbation"), ("knn", "Distance to training data"),
          ("cost", "Imagined cost"), ("obs_perturb", "Image perturbation"), ("combo_mc_dist", "MC-dropout + distance (rank avg.)"),
-         ("dist_start", "Distance moved (control)"), ("random", "Random (control)")]
+         ("dist_start", "Distance moved (baseline)"), ("random", "Random (baseline)")]
 ORDER = [(k, n) for k, n in ORDER if k in A]
 best = max(["mc_dropout", "act_perturb", "obs_perturb", "knn"], key=lambda k: A[k]["auroc"])
 h_rows = []
@@ -182,11 +182,43 @@ fig.tight_layout(pad=0.3)
 fig.savefig(FIG / "fig_cem.pdf")
 plt.close(fig)
 
-# ---------------------------------------------------------------- copied figures
-from PIL import Image  # noqa: E402
-arch = Image.open(REPO / "docs/mid_review/architecture/architecture_A_end_to_end.png")
-w, h = arch.size
-arch.crop((int(0.035 * w), int(0.185 * h), int(0.965 * w), int(0.94 * h))).save(FIG / "fig_architecture.png")  # drop slide title and footer
+# ---------------------------------------------------------------- Figure: success against the paper
+fig, ax = plt.subplots(figsize=(3.45, 1.95))
+envs = ["pusht", "wall", "point_maze"]
+x = np.arange(len(envs))
+bars = [("Ours, one plan", 0, BLUE, 0.45), ("Ours, replanning", 1, BLUE, 1.0),
+        ("Paper, one plan", 0, GREY, 0.45), ("Paper, replanning", 1, GREY, 1.0)]
+for j, (lab, which, col, alpha) in enumerate(bars):
+    vals, errs = [], []
+    for env in envs:
+        seeds = seeds_with(env, 1)
+        if lab.startswith("Ours"):
+            final = min(3, min(len(M[env][k]["rounds"]) for k in seeds))
+            m, s = mean_sd([M[env][k]["rounds"][0 if which == 0 else final - 1]["rate"] for k in seeds])
+            vals.append(m); errs.append(0 if np.isnan(s) else s)
+        else:
+            vals.append(PUBLISHED[env][which]); errs.append(0)
+    xs = x + (j - 1.5) * 0.19
+    ax.bar(xs, vals, 0.17, color=col, alpha=alpha, label=lab, yerr=errs if any(errs) else None,
+           error_kw=dict(lw=0.7, capsize=1.5, ecolor=INK))
+    for xx, v, e in zip(xs, vals, errs):
+        ax.text(xx, v + e + 0.025, f"{v:.2f}", ha="center", fontsize=5, color=INK)
+ax.set_xticks(x, [ENV_NAME[e] for e in envs])
+ax.set_ylim(0, 1.15)
+ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+ax.set_ylabel("Success rate")
+ax.tick_params(axis="x", length=0)
+ax.grid(axis="y", lw=0.3, color="#E5E7EB")
+ax.set_axisbelow(True)
+ax.legend(frameon=False, ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=6, handlelength=1.2,
+          columnspacing=1.0)
+fig.tight_layout(pad=0.3)
+fig.savefig(FIG / "fig_success_bars.pdf")
+plt.close(fig)
+
+# ---------------------------------------------------------------- architecture and copied figures
+from fig_arch import draw  # noqa: E402
+draw(FIG / "fig_architecture.pdf")
 for src, dst in [(REPO / "docs/mid_review/assets/rollout_failure_seed101_ep0.png", "fig_failure.png"),
                  (REPO / "docs/mid_review/assets/rollout_success_seed100_ep3.png", "fig_success.png")]:
     shutil.copy(src, FIG / dst)
