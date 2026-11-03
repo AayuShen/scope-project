@@ -31,17 +31,17 @@ for the same actions. This is the failure SCoPe is meant to catch.*
 - **Reproduced DINO-WM on a laptop GPU (8 GB).**
   - Push-T, three random seeds: 0.873 after one plan and 0.900 after replanning. The paper reports 0.86 and 0.90.
   - PointMaze: 0.86 and 1.00, against the paper's 0.80 and 0.98.
-  - Wall, two seeds: 0.52 after one plan and 0.94 after replanning, against the paper's 0.74 and 0.96. A third seed is running.
+  - Wall, three seeds: 0.52 after one plan and 0.95 after replanning, against the paper's 0.74 and 0.96.
 - **Made planning 3.8× faster**, with patches that fit the model in 8 GB and were checked not to change any of the planner's choices.
 - **Found and logged a failure case.** In one Push-T episode, the model imagines the block reaching the goal, but in the simulator it barely moves. This is the problem SCoPe targets.
 - **Designed the experiment that tests SCoPe.** We have the hypotheses, the metrics, the controls and a go/no-go point. We also wrote the code interfaces the trust module will plug into.
-- **Ran a first pilot of the trust scores (H1).** On 40 Push-T episodes we executed 192 candidate plans each in the simulator and compared the model's imagination with reality: 38,400 imagined steps. The question was whether a score can pick out the 10% of steps with the largest real error, where 0.5 is a coin flip and 1.0 is perfect.
-  - MC-dropout scored 0.87. It runs the predictor four times with dropout on and measures disagreement. It beat both random (0.50) and the trivial "how far did the plan move" baseline (0.80). No training was needed.
-  - Replaying a gate offline did not change which plans succeed: 65% with or without it, and even with a gate that knows the true error. Whether the gate helps must be shown in the closed loop, which is next.
-  - This is one seed. Details: [docs/experiments/h1_pilot_trust_scores.md](docs/h1_pilot_trust_scores.md).
+- **Ran a pilot of the trust scores (H1) on three seeds.** On 80 Push-T episodes we executed 192 candidate plans each in the simulator and compared the model's imagination with reality: 76,800 imagined steps. The question was whether a score can pick out the 10% of steps with the largest real error, where 0.5 is a coin flip and 1.0 is perfect.
+  - MC-dropout scored 0.86 (95% interval 0.84–0.88; 0.87, 0.84 and 0.88 on the three seeds). It runs the predictor four times with dropout on and measures disagreement. It beat both random (0.50) and the trivial "how far did the plan move" baseline (0.79). No training was needed.
+  - Replaying a gate offline barely changed which plans succeed: 71% without it, 70% with the MC-dropout gate, and 73% even with a gate that knows the true error. Whether the gate helps must be shown in the closed loop, which is next.
+  - Details: [docs/experiments/h1_pilot_trust_scores.md](docs/h1_pilot_trust_scores.md).
 - **Prepared the mid-review material:** the slide deck, a speaker script, a references list and a question-and-answer document.
 
-**Not done yet:** the gated planner in the closed loop, and the trust scores over more seeds and settings. So far, the only SCoPe-specific result is the one-seed pilot above.
+**Not done yet:** the gated planner in the closed loop, and the trust scores in more settings (other start states, visual changes, Wall and PointMaze). So far, the SCoPe-specific result is the offline pilot above.
 
 
 We are **not training** the world model: every result uses the DINO-WM authors' released checkpoints.
@@ -50,6 +50,7 @@ We are **not training** the world model: every result uses the DINO-WM authors' 
 
 | What | Where |
 |---|---|
+| **The final report (IEEE conference paper, PDF)** | [SCoPe_final_report.pdf](SCoPe_final_report.pdf) (LaTeX sources in [report/](report/)) |
 | The deck we present (8 slides, PDF) | [scope-mid-review/SCoPe_mid_review.pdf](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_mid_review.pdf) |
 | What to say on each slide (about 10 minutes) | [scope-mid-review/SCoPe_speaker_script.txt](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_speaker_script.txt) |
 | Backup deck with every detail (38 slides, PDF) | [scope-mid-review/SCoPe_mid_review_extended.pdf](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_mid_review_extended.pdf) |

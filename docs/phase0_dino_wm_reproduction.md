@@ -150,13 +150,14 @@ runtime; at most 3 MPC rounds; `scripts/phase0_env_full.sh`):
 |---|---|---|---|---|---|---|
 | Wall | 99 | 50 | 0.54 (27/50) | 0.90 (45/50) after round 2; **0.92 (46/50)** after round 3 | 0.74 / 0.96 | WSL shut down (10 Oct) after round 3's evaluation but before the per-episode summary printed; round 3 is read from the `MPC iter 2 Eval` line (first reported as lost). Log `wall/full_wall_20261010_135226.log` |
 | Wall | 100 | 50 | 0.50 (25/50) | 0.92 (46/50) after round 2; **0.96 (48/50)** after round 3 | 0.74 / 0.96 | 3 Nov. Log `wall/wall_seed100_20261103_055240.log` |
+| Wall | 101 | 50 | 0.52 (26/50) | 0.92 (46/50) after round 2; **0.96 (48/50)** after round 3 | 0.74 / 0.96 | 3 Nov. WSL shut down right after round 3's evaluation (as for seeds 99 and 100); round 3 read from the eval line. Log `wall/wall_seed101_20261103_120805.log` |
 | PointMaze | 99 | 50 | 0.86 (43/50) | **1.00 (50/50)** after round 2 | 0.80 / 0.98 | Completed 3 Nov in ~75 min of CEM time; stopped after round 2 because every episode was solved. Log `point_maze/point_maze_20261103_031258.log` |
 
-PointMaze matches the paper. Wall after replanning is close to it: 0.94 on average after round 3
-(0.92 and 0.96) against 0.96. Wall's single-plan result is lower than published on
-both seeds (0.54 and 0.50 against 0.74), so this gap is consistent rather than seed luck. The
+PointMaze matches the paper. Wall after replanning is close to it: 0.95 on average after round 3
+(0.92, 0.96 and 0.96 over three seeds) against 0.96. Wall's single-plan result is lower than published on
+all three seeds (0.54, 0.50 and 0.52 against 0.74), so this gap is consistent rather than seed luck. The
 cause is not known yet: we use the upstream Wall config, and the paper does not say exactly how its
-CEM row was evaluated, so mapping it to our round 1 may be the mismatch. Seed 101 is running.
+CEM row was evaluated, so mapping it to our round 1 may be the mismatch.
 
 Notes from the smoke test:
 - Push-T success = block + agent positions within 20 and angle within π/9 of the goal

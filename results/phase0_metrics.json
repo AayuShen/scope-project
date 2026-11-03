@@ -784,6 +784,89 @@
      }
     ],
     "finished": false
+   },
+   "101": {
+    "log": "wall/wall_seed101_20261103_120805.log",
+    "rounds": [
+     {
+      "solved": 26,
+      "episodes": 50,
+      "rate": 0.52
+     },
+     {
+      "solved": 46,
+      "episodes": 50,
+      "rate": 0.92
+     },
+     {
+      "solved": 48,
+      "episodes": 50,
+      "rate": 0.96
+     }
+    ],
+    "round1_cem": [
+     {
+      "iteration": 1,
+      "success_rate": 0.0,
+      "mean_state_dist": 25.96,
+      "seconds": 128
+     },
+     {
+      "iteration": 2,
+      "success_rate": 0.04,
+      "mean_state_dist": 19.72,
+      "seconds": 128
+     },
+     {
+      "iteration": 3,
+      "success_rate": 0.22,
+      "mean_state_dist": 14.78,
+      "seconds": 126
+     },
+     {
+      "iteration": 4,
+      "success_rate": 0.44,
+      "mean_state_dist": 10.83,
+      "seconds": 123
+     },
+     {
+      "iteration": 5,
+      "success_rate": 0.4,
+      "mean_state_dist": 8.23,
+      "seconds": 124
+     },
+     {
+      "iteration": 6,
+      "success_rate": 0.44,
+      "mean_state_dist": 8.61,
+      "seconds": 125
+     },
+     {
+      "iteration": 7,
+      "success_rate": 0.5,
+      "mean_state_dist": 7.43,
+      "seconds": 123
+     },
+     {
+      "iteration": 8,
+      "success_rate": 0.48,
+      "mean_state_dist": 7.11,
+      "seconds": 124
+     },
+     {
+      "iteration": 9,
+      "success_rate": 0.54,
+      "mean_state_dist": 6.72,
+      "seconds": 125
+     },
+     {
+      "iteration": 10,
+      "success_rate": 0.52,
+      "mean_state_dist": 6.69,
+      "seconds": 121
+     }
+    ],
+    "finished": false
    }
   },
   "point_maze": {

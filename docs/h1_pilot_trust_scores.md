@@ -3,7 +3,7 @@
 **Question (H1, small scale).** When DINO-WM imagines the result of a candidate plan, can a score
 computed from the imagination alone tell which imagined steps are most wrong?
 
-**Status.** Pilot: one seed, 40 decision points, released Push-T checkpoint, no training of any
+**Status.** Pilot: three seeds (40 + 20 + 20 decision points), released Push-T checkpoint, no training of any
 kind. It is the first SCoPe-specific measurement and a check of the logging pipeline, not the
 final H1 result (which needs more decision points, several seeds, the four sampling contexts of
 the design doc, and the ensemble score).
@@ -47,7 +47,32 @@ by the deck is copied to `docs/mid_review/data/h1_pilot_summary.json`.
    random) and an oracle gate (rejects using the true error). Outcome: does the chosen plan succeed
    in the simulator? Offline and on recorded candidates only, so it is a hint for H4, not H4.
 
-## Results
+## Results: three seeds pooled (seeds 1, 2, 3)
+
+After the first run (seed 1, 40 decision points, below) we ran seeds 2 and 3 with 20 decision points
+each (same settings) and pooled all 80 decision points with `scripts/h1_aggregate.py`
+(76,800 imagined steps; labels thresholded within each run, as in the pilot; bootstrap over the 80
+decision points). Summary: `docs/mid_review/data/h1_pilot_pooled.json`.
+
+| Score | AUROC, pooled | 95% interval | Seed 1 / 2 / 3 |
+|---|---|---|---|
+| **MC-dropout** | **0.863** | 0.845–0.880 | 0.869 / 0.838 / 0.878 |
+| Action perturbation | 0.657 | 0.638–0.674 | 0.656 / 0.656 / 0.661 |
+| Distance to training data | 0.619 | 0.563–0.664 | 0.646 / 0.514 / 0.663 |
+| Imagined cost | 0.511 | 0.475–0.551 | 0.505 / 0.452 / 0.576 |
+| Image perturbation | 0.496 | 0.440–0.546 | 0.498 / 0.445 / 0.545 |
+| MC-dropout + distance moved (rank average, fixed in advance) | 0.851 | 0.831–0.869 | 0.856 / 0.843 / 0.851 |
+| *Distance moved (trivial control)* | 0.790 | 0.761–0.818 | 0.796 / 0.805 / 0.762 |
+| *Random (control)* | 0.500 | 0.493–0.507 | 0.498 / 0.505 / 0.501 |
+
+- MC-dropout's pooled interval (0.845–0.880) lies entirely above the trivial control's (0.761–0.818),
+  so the go / no-go bar of the design is met on three seeds, and MC-dropout is above the control on
+  every seed. The combination with the trivial control does not help.
+- Offline gate replay, 80 decision points (one decision point = 1.25 points): plain 71.3%, oracle
+  72.5%, random 70.0%, MC-dropout 70.0%, action perturbation 75.0%, distance to data 68.8%,
+  distance moved 67.5%. Still flat, oracle included: the conclusion below holds.
+
+## Results: first run (seed 1)
 
 Run `pilot40`, 3 November 2026: 40 decision points × 192 candidates × 5 imagined steps =
 **38,400 imagined steps** checked against the simulator, about 2 minutes per decision point on the
