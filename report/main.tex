@@ -18,7 +18,6 @@
 \def\UrlBreaks{\do\/\do-\do.}
 
 \input{generated/numbers}
-\newcommand{\Rset}{\mathbb{R}}
 
 \begin{document}
 
@@ -43,205 +42,190 @@ Amritapuri}}
 \pagestyle{plain}
 
 \begin{abstract}
-Planners built on learned world models choose the action sequence whose \emph{imagined} outcome looks best, but they
-trust every imagined future equally, including the ones the model gets badly wrong. We present SCoPe, a decision-time
-trust check for latent model-predictive control (MPC) with a frozen joint-embedding predictive (JEPA) world model:
-every imagined step of every candidate plan receives a trust score, and candidates that leave the region where the
-model is reliable are rejected before a plan is chosen. Building on DINO-WM, we reproduce its planning results on an
-8\,GB laptop GPU, made feasible by runtime optimisations that cut rollout time 3.8$\times$ without changing any decision
-of the cross-entropy-method (CEM) planner: Push-T reaches \PushTFinalMean{} over \PushTSeeds{} seeds (published 0.90),
-Wall \WallFinalMean{} over \WallSeeds{} seeds (0.96) and PointMaze \MazeFinalMean{} (0.98). We then measure how well
-five training-free trust scores detect real prediction errors, on \HPairs{} imagined steps that we verify against the
-simulator over \HSeedWord{}. A Monte-Carlo-dropout score identifies the steps with the largest real error at AUROC
-\HMC{} (95\% CI \HMCCI{}), above a random score (\HRand{}) and a strong trivial baseline (\HDist{}) on every seed.
-A replay of the trust gate on recorded candidates shows that filtering the final candidate set barely changes success,
-even with an oracle gate, which identifies where the gate must act: inside the replanning loop rather than as a
-one-shot filter.
+A robot can plan by imagining the result of many possible action sequences with a learned \emph{world model} and
+choosing the one whose imagined result is closest to the goal. Such planners trust every imagined future equally, even
+when the model's prediction is wrong. We present SCoPe, a planner that first checks how reliable each imagined step is
+and rejects plans that rely on unreliable predictions. We build on DINO-WM, a world model that predicts the future in
+the feature space of a pretrained image encoder. First, we reproduce DINO-WM's planning results on a single 8\,GB laptop
+GPU, with code changes that make planning 3.8$\times$ faster without changing any of its decisions. We reach success
+rates of \PushTFinalMean{} on Push-T, \WallFinalMean{} on Wall and \MazeFinalMean{} on PointMaze, against published
+values of 0.90, 0.96 and 0.98. Second, we compare five reliability scores on \HPairs{} imagined steps whose real outcome
+we obtained from the simulator. A score based on Monte-Carlo dropout identifies the most wrong predictions with an
+AUROC of \HMC{}, clearly better than random guessing (\HRand{}) and a simple baseline (\HDist{}), on all three seeds.
+Third, we show that removing unreliable plans only at the final selection step hardly changes success, so the check
+must be used throughout the planning process.
 \end{abstract}
 
 \begin{IEEEkeywords}
-world models, model-based reinforcement learning, model-predictive control, JEPA, uncertainty estimation
+world models, model-based reinforcement learning, planning, uncertainty estimation
 \end{IEEEkeywords}
 
 % ======================================================================
 \section{Introduction}
 
-A robot can plan by imagining the consequences of its actions with a learned world model and executing the action
-sequence whose imagined result is closest to its goal. Joint-embedding predictive architectures (JEPA)~\cite{ref5,ref4}
-make this practical from images: instead of predicting pixels, they predict the future in the embedding space of a
-pretrained encoder. DINO-WM~\cite{ref1} combines a frozen DINOv2 encoder~\cite{ref3} with a learned latent predictor and
-plans with the cross-entropy method (CEM) inside MPC, reaching 90\% success on the Push-T manipulation task without any
-reward or task-specific training; V-JEPA~2-AC~\cite{ref2} applies the same idea to real robot arms.
+In model-based reinforcement learning, an agent learns a \emph{world model}: a neural network that predicts what will
+happen next if the agent takes a given action. The agent can then plan by trying many action sequences ``in its head''
+and executing the most promising one. DINO-WM~\cite{ref1} is a recent world model of this kind. It describes each camera
+image with the features of a pretrained image encoder, DINOv2~\cite{ref3}, and learns to predict how these features
+change after an action. This design, in which the model predicts features rather than pixels, is called a
+joint-embedding predictive architecture (JEPA)~\cite{ref5}. DINO-WM plans without any reward function: it only needs
+an image of the goal, and it reaches 90\% success on the Push-T pushing task.
 
-These planners have a blind spot: the planner selects the candidate whose imagined future scores best and never asks
-whether that imagination is reliable. Fig.~\ref{fig:failure} shows a case from our own runs: the model imagines the
-T-shaped block rotating onto the goal, the planner commits to the plan, and in the simulator the block barely moves.
-Prediction errors also grow with the horizon, and simply penalising uncertainty can backfire~\cite{ref18}.
+The weakness of such planners is that they never ask whether the model's imagination is correct. Fig.~\ref{fig:failure}
+shows a case from our own runs. The model imagines the T-shaped block moving onto the goal, the planner commits to this
+plan, and in the simulator the block barely moves. The episode fails because the planner trusted a wrong prediction.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.86\textwidth]{figures/fig_failure.png}
-\caption{A logged failure (Push-T, seed 101, episode 0, simulator steps 0--25 and the goal). Top: what happened in the
-simulator. Bottom: what DINO-WM imagined for the same actions. The imagined block reaches the goal pose; the real one
-barely moves, and the episode is never solved. SCoPe is designed to flag such imagined steps before a plan is chosen.}
+\caption{A failure from our runs (Push-T). Top: what happened in the simulator. Bottom: what DINO-WM imagined for the
+same actions. In the imagination the block reaches the goal; in reality it barely moves. SCoPe is designed to detect
+such wrong predictions before a plan is chosen.}
 \label{fig:failure}
 \end{figure*}
 
-\textbf{Research question.} Can a score computed only from the imagined latent states tell which imagined steps are
-wrong, reliably enough to decide which candidate plans the planner may act on?
+SCoPe addresses this weakness. Before the planner chooses a plan, SCoPe gives every imagined step a \emph{trust score}
+that estimates how likely the prediction is to be wrong, and rejects plans that contain untrusted steps. The planner
+then chooses only among plans it can trust. The name refers to this idea: planning stays inside the \emph{trust region},
+the set of situations in which the model's predictions are reliable.
 
 \textbf{Novel contributions.}
 \begin{enumerate}
-\item \emph{Trust-region planning for JEPA world models.} SCoPe formulates latent MPC as cost minimisation under a
-per-step trust constraint (Eq.~\ref{eq:objective}) and enforces it with a gate inside CEM, with a fallback ladder for
-when too few candidates pass. The world model is never retrained, so the method applies to any frozen backbone.
-\item \emph{An imagined-against-real evaluation protocol.} Every imagined step of CEM's candidates is labelled with its
-real latent error by executing the candidate in the simulator from the same start state, and the label is defined per
-step index so that the growth of error with the horizon cannot inflate a score.
-\item \emph{A training-free trust score that works.} Of five scores, MC-dropout on the frozen predictor detects the
-most wrong imagined steps at AUROC \HMC{}, above a random score and above a strong trivial baseline on all \HSeeds{} seeds.
-We also show that the planner's own imagined cost carries no information about prediction error.
-\item \emph{Where a trust gate must act.} A replay with random, trust-score and oracle gates shows that rejecting candidates
-only at the final selection barely changes success, even when the true error is known, so the gate has to change the
-search across replanning rounds.
-\item \emph{An efficient, verified reproduction.} DINO-WM planning on three tasks on an 8\,GB laptop GPU, 3.8$\times$
-faster than the unmodified code, with the planner's choices verified to be unchanged.
+\item \emph{Trust-checked planning.} We add a reliability check to the planner of a frozen world model. The world model
+is not retrained, so the method can be added to any similar model.
+\item \emph{A way to measure prediction errors.} We execute the planner's candidate plans in the simulator and compare
+each imagined step with what really happened. This gives, for every imagined step, its true error.
+\item \emph{A trust score that works without training.} Of the five scores we compare, Monte-Carlo dropout finds the
+most wrong predictions best (AUROC \HMC{}), on every seed. The planner's own confidence carries no such information.
+\item \emph{Where the check must be applied.} Removing unreliable plans only at the last step barely changes success,
+even if the true errors are known. The check must therefore act during the whole search.
+\item \emph{An efficient reproduction.} DINO-WM runs on a single 8\,GB laptop GPU, 3.8$\times$ faster than the original
+code, with identical planning decisions.
 \end{enumerate}
 
 % ======================================================================
-\section{Background and Related Work}
+\section{Related Work}
 
-\textbf{Uncertainty in model-based RL.} PETS~\cite{ref6} plans with an ensemble of probabilistic models; MBPO~\cite{ref8}
-limits model rollouts to short horizons; MOPO~\cite{ref9} and MOReL~\cite{ref10} penalise or halt rollouts in uncertain
-regions for offline RL; MACURA~\cite{ref11} adapts the rollout length to model uncertainty. All of them distrust the
-model \emph{while training a policy}, mostly on low-dimensional states.
+\textbf{Uncertainty in model-based RL.} Several methods avoid trusting a learned model where it is uncertain. PETS~\cite{ref6}
+plans with several models and measures how much they disagree; MBPO~\cite{ref8} only uses short imagined rollouts;
+MOPO~\cite{ref9} and MOReL~\cite{ref10} penalise uncertain states when learning a policy from fixed data. These methods
+are used while \emph{training} a policy, mostly with simple state vectors rather than images.
 
-\textbf{Latent world models.} PlaNet~\cite{ref7}, DreamerV3~\cite{ref12} and TD-MPC2~\cite{ref13} learn latent dynamics
-with a reward; JEPA-style planners such as DINO-WM~\cite{ref1}, PLDM~\cite{ref14}, HWM~\cite{ref15} and
-V-JEPA~2-AC~\cite{ref2} are reward-free and plan towards a goal image, but they trust every imagined rollout equally.
-Latent safety filters~\cite{ref16} reject actions in latent space for safety constraints rather than prediction errors.
+\textbf{World models that plan from images.} PlaNet~\cite{ref7}, DreamerV3~\cite{ref12} and TD-MPC2~\cite{ref13} learn
+compact models of images together with a reward. DINO-WM~\cite{ref1} and V-JEPA~2-AC~\cite{ref2} plan towards a goal
+image without a reward, but they trust every imagined future equally.
 
-\textbf{Known pitfalls.} Ensemble disagreement can miss compounding error in latent models~\cite{ref17}; uncertainty
-penalties raised collisions in a navigation study~\cite{ref18}; and diagnostics of JEPA planners point to
-action-consistency~\cite{ref19}, representation geometry~\cite{ref20} and stage-wise reliability~\cite{ref21}. We therefore
-test every trust score against the real error rather than assuming it works, with deep ensembles~\cite{ref22} and
-MC-dropout~\cite{ref23} as the classical candidates.
+\textbf{Known difficulties.} Measuring uncertainty is not easy: disagreement between models can miss errors that build
+up over time~\cite{ref17}, and penalising uncertainty can even make results worse~\cite{ref18}. We therefore test every
+trust score against the true error instead of assuming that it works.
 
-\textbf{Difference from prior work.} SCoPe changes one step of the planning loop: it scores each imagined step of each
-CEM candidate at decision time, with a frozen backbone, and rejects untrusted candidates before a plan is chosen.
+\textbf{Our difference.} SCoPe checks the reliability of each imagined step \emph{at the moment of planning}, for a
+frozen image-based world model, and uses the check to reject plans before one is chosen.
 
 % ======================================================================
 \section{Problem Formulation}
 
-We model goal-reaching as a finite-horizon MDP without a hand-designed reward. The observation $o_t$ is a
-$224\times224$ image and the agent's proprioceptive state $p_t$. The frozen encoder maps it to the latent state
-$z_t=E(o_t)\in\Rset^{196\times384}$ (DINOv2 ViT-S/14 patch tokens). An action is a 2-D target displacement; actions are
-grouped in chunks of five simulator steps, $a_k\in\Rset^{10}$. The predictor $f_\theta$ imagines
-$\hat z_{k+1}=f_\theta(\hat z_{k-2:k},a_k)$ from a three-frame history. Real transitions come from the simulator. An
-episode succeeds when the environment's own criterion holds at the end (for Push-T, block and agent within 20 units and
-$\pi/9$ of the goal pose).
+The agent sees an image of the scene and its own position. The encoder turns the image into a feature vector $z$, the
+\emph{latent state}. An action is a short movement of the agent. Given the current latent state and a sequence of
+actions, the world model predicts the future latent states $\hat z_1,\dots,\hat z_5$, five steps ahead. The goal is given
+as an image, with latent state $z_g$. An episode is a success if the simulator reports that the goal was reached.
 
-Given the goal latent $z_g$, DINO-WM plans $H=5$ chunks ahead by minimising
-$C(a_{1:H})=\lVert\hat z_H-z_g\rVert^2+\alpha\,\lVert\hat p_H-p_g\rVert^2$. SCoPe adds a constraint, not a reward:
+The DINO-WM planner chooses the action sequence $a$ whose last imagined state is closest to the goal,
+$C(a)=\lVert\hat z_5-z_g\rVert^2$. SCoPe adds a condition: every imagined step must be trusted,
 \begin{equation}
-\min_{a_{1:H}} C(a_{1:H}) \quad\text{s.t.}\quad u(\hat z_k)\le\tau \;\;\text{for all } k=1,\dots,H,
+\min_{a}\; C(a) \quad\text{subject to}\quad u(\hat z_k)\le\tau \;\;\text{for } k=1,\dots,5,
 \label{eq:objective}
 \end{equation}
-where $u$ is a trust score (higher means less trusted) and $\tau$ is a threshold. This is a sequential decision problem
-rather than a supervised one because a push takes effect several steps later and success is judged at the end; we use
-CEM-MPC rather than PPO or SAC because the data are offline and reward-free, and because CEM keeps an explicit set of
-candidates that a gate can filter.
+where $u$ is a trust score (a higher value means less trusted) and $\tau$ is a threshold. This is a sequential decision
+problem, because the effect of an action appears several steps later and success is only known at the end.
 
 % ======================================================================
-\section{Method: SCoPe}
+\section{Method}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_architecture.pdf}
-\caption{SCoPe architecture. Top: one MPC round at decision time. The frozen DINO-WM encoder and predictor (grey)
-imagine every CEM candidate; the trust module (blue) scores each imagined step and the gate removes untrusted candidates
-before selection. Bottom: the evaluation path, which executes recorded candidates in the simulator and compares the
-imagined latents with the real ones.}
+\caption{SCoPe architecture. Top: one planning round. The frozen DINO-WM encoder and predictor (grey) imagine every
+candidate plan; the trust module (blue) scores each imagined step, and the gate removes untrusted plans before the best
+one is selected. Bottom: how we evaluate the trust scores, by executing recorded plans in the simulator and comparing
+imagined and real outcomes.}
 \label{fig:arch}
 \end{figure*}
 
-\subsection{Architecture}
-Fig.~\ref{fig:arch} shows the system. At each decision the simulator returns an observation, the encoder maps it to a
-latent state, CEM samples candidate action sequences, and the predictor imagines each of them. The trust module scores
-every imagined step, the gate removes candidates with an untrusted step, and only accepted candidates compete on cost.
-For evaluation, the imagined latents are logged next to the encodings of what really happened. The world model is never
-retrained. Backbones and scorers plug in through two small interfaces, so V-JEPA~2-AC can replace DINO-WM without
-changes to the planner.
+\subsection{Planning with the cross-entropy method}
+DINO-WM plans with the cross-entropy method (CEM), a simple search procedure. CEM samples 300 random action sequences,
+imagines the result of each one with the world model, keeps the 30 best, and samples new sequences around them. After
+30 such iterations it executes the beginning of the best sequence, observes the new image, and plans again. This
+repeated planning is called model-predictive control (MPC); one plan-and-execute cycle is one \emph{round}.
 
-\subsection{Trust scores}
-All scores are computed from the imagination alone, need no training, and are larger for less trusted steps:
-\begin{itemize}
-\item \textbf{MC-dropout}~\cite{ref23}: variance of $\hat z_k$ over four predictor passes with its dropout (0.1, as trained) on.
-\item \textbf{Action perturbation}: divergence of the imagined rollout when the actions receive Gaussian noise ($\sigma=0.1$).
-\item \textbf{Image perturbation}, in the spirit of~\cite{ref19}: divergence when the start image receives noise ($\sigma=0.1$).
-\item \textbf{Distance to training data}: mean distance to the five nearest encoded training frames (random projection to 512 dimensions).
-\item \textbf{Imagined cost}: the plan's own predicted distance to the goal.
-\item Baselines: \textbf{distance moved}, $\lVert\hat z_k-z_0\rVert$, a trivial score, and \textbf{random}.
-\end{itemize}
-
-\subsection{Gated CEM-MPC with a fallback ladder}
-Algorithm~\ref{alg:scope} gives the decision loop. Imagined latents are never used as the start of the next plan: after
-executing the accepted actions, the agent observes again. When too few candidates pass, the ladder widens the search,
-then shortens the horizon, then takes a safe no-op, and logs which rung fired.
+\subsection{SCoPe}
+Fig.~\ref{fig:arch} shows the system and Algorithm~\ref{alg:scope} the decision loop. SCoPe adds two parts to the
+planner: a \emph{trust module}, which scores every imagined step of every candidate, and a \emph{gate}, which removes
+candidates that contain an untrusted step. Only the remaining candidates compete on cost. If too few candidates pass,
+SCoPe falls back to a wider search, then to a shorter plan, then to a safe action. The world model itself is never
+changed.
 
 \begin{algorithm}[t]
-\caption{SCoPe decision step (one MPC round)}\label{alg:scope}
+\caption{SCoPe planning round}\label{alg:scope}
 \begin{algorithmic}[1]
-\State observe $o_t$; $z_t\gets E(o_t)$
-\For{CEM iteration $i=1,\dots,I$}
-  \State sample $N$ action sequences $a^{(n)}_{1:H}\sim\mathcal{N}(\mu,\Sigma)$
-  \State imagine $\hat z^{(n)}_{1:H}$ with $f_\theta$; score $u^{(n)}_k$ for every step
-  \State accepted $\mathcal{A}\gets\{n:\max_k u^{(n)}_k\le\tau\}$
-  \If{$|\mathcal{A}|<K$} \State fallback: resample wider $\rightarrow$ $H\gets H/2$ $\rightarrow$ no-op (logged) \EndIf
-  \State refit $(\mu,\Sigma)$ to the $K$ lowest-cost candidates in $\mathcal{A}$
+\State observe the image and encode it
+\For{each CEM iteration}
+  \State sample 300 action sequences
+  \State imagine the result of each one with the world model
+  \State compute the trust score of every imagined step
+  \State keep only sequences whose steps are all trusted
+  \If{too few sequences are kept} \State fall back (wider search, shorter plan, safe action) \EndIf
+  \State refit the sampling to the 30 lowest-cost kept sequences
 \EndFor
-\State execute the first chunks of the best accepted plan; return to line 1
+\State execute the start of the best sequence; repeat
 \end{algorithmic}
 \end{algorithm}
 
+\subsection{Trust scores}
+We compare five scores. None of them needs any training:
+\begin{itemize}
+\item \textbf{MC-dropout}~\cite{ref23}: the world model contains dropout, which randomly switches off parts of the
+network. We run the prediction four times with dropout switched on. If the four predictions disagree, the model is
+uncertain.
+\item \textbf{Action perturbation}: how much the prediction changes when the actions are changed slightly.
+\item \textbf{Image perturbation}: how much the prediction changes when the input image is changed slightly.
+\item \textbf{Distance to training data}: how far the imagined state is from the states seen during training.
+\item \textbf{Imagined cost}: the planner's own estimate of how far the plan ends from the goal.
+\end{itemize}
+We compare them with two baselines: a \textbf{random} score, and \textbf{distance moved}, which is simply how far the
+imagined state is from the starting state.
+
 \subsection{Evaluation questions}
-\textbf{Q1:} Can DINO-WM planning be reproduced on a single 8\,GB GPU without changing the planner's decisions?
-\textbf{Q2:} Does a trust score rank imagined steps with large real latent error above the others (AUROC, Spearman
-$\rho$), and does it beat both a random and a trivial baseline? We require non-overlapping 95\% intervals.
-\textbf{Q3:} When the gate filters the candidate set, does the chosen plan succeed more often than without a gate, and
-how close does it come to an oracle gate that knows the true error?
+\textbf{Q1:} Can DINO-WM be reproduced on a single 8\,GB GPU? \textbf{Q2:} Which trust score best identifies the
+imagined steps that are really wrong, and is it better than both baselines? \textbf{Q3:} Does removing untrusted plans
+make the chosen plan succeed more often?
 
 % ======================================================================
 \section{Experimental Setup}
 
-\textbf{Tasks and data.} Push-T~\cite{ref24} (push a T-shaped block onto a target), Wall (pass through a door) and
-PointMaze~\cite{ref25}, with the datasets and released checkpoints of DINO-WM~\cite{ref26}. Push-T goals are the real
-state 25 steps later on a held-out trajectory; Wall and PointMaze goals are sampled reachable states.
+\textbf{Tasks.} We use the three simulated tasks of DINO-WM: Push-T (push a T-shaped block onto a target), Wall (move
+through a door in a wall) and PointMaze (move a ball through a maze), with the published datasets and trained
+models~\cite{ref26}. For each task we run 50 start--goal pairs per seed, with seeds 99, 100 and 101, and allow up to
+three planning rounds.
 
-\textbf{Planner.} Upstream settings: 300 samples, top 30, horizon 5, 30 CEM iterations on Push-T and 10 on Wall and
-PointMaze, five chunks executed per MPC round, at most three rounds (the paper does not state its replanning budget, so
-we report every round). 50 start/goal pairs per seed; seeds 99, 100 and 101. We read the paper's CEM row as our round~1
-(one plan, executed open loop) and its MPC row as success after replanning.
+\textbf{Hardware.} All experiments run on one RTX~5060 laptop GPU with 8\,GB of memory. The original code did not fit
+in this memory and needed 26.2\,s for one batch of imagined rollouts. We optimised the code (for example, by encoding the
+shared starting image once instead of 300 times), which reduced this to 6.9\,s, a 3.8$\times$ speed-up. We checked that
+the planner selects exactly the same plans as before.
 
-\textbf{Hardware and runtime optimisations.} One RTX~5060 laptop GPU (8\,GB), WSL2, PyTorch~2.7.1 with CUDA~12.8.
-Unmodified, a 300-candidate rollout took 26.2\,s and did not fit in memory at full settings. We fused attention, encoded
-the shared observation once instead of 300 times, chunked rollouts, disabled autograd where unused, and enabled TF32
-matrix multiplication: 6.9\,s per rollout (3.8$\times$). Against the unmodified model, CEM's top-30 set and its update
-were identical at three sampling spreads; bf16 was faster but changed 17\% of the elites at small spreads and was
-therefore not used.
+\textbf{Measuring the true error.} On \HEpisodes{} Push-T start--goal pairs over \HSeedWord{}, we recorded 192 of the
+plans that CEM considered for each pair, from bad early plans to good late ones. We imagined each plan with the world
+model, and then executed the same plan in the simulator from the same starting state. Comparing the imagined and the
+real latent state after each step gives the true prediction error of \HPairs{} imagined steps. We mark the 10\% of steps
+with the largest error as \emph{wrong}.
 
-\textbf{Trust-score evaluation.} On \HEpisodes{} Push-T decision points over \HSeedWord{} (40, 20 and 20), CEM ran 10
-iterations; we recorded 192 of the candidates it evaluated per decision point (48 from iteration~1, 48 from iteration~5
-and 96 from iteration~10, so the set spans bad to good plans), imagined each, executed each from the same start state in
-the simulator, and encoded the real frames at steps 5,\,10,\,\dots,\,25. This gives \HPairs{} imagined steps with a real
-latent next to them. The real error of step $k$ is the mean squared difference of the imagined and real patch tokens; a
-step is \emph{unreliable} if its error is in the top 10\% \emph{for its step index}. AUROC and Spearman $\rho$ are
-computed per step and averaged; 95\% intervals come from 500 bootstrap resamples over decision points.
+\textbf{Metric.} We measure each trust score with the AUROC: the probability that a randomly chosen wrong step receives
+a higher score than a randomly chosen correct step. An AUROC of 0.5 means random guessing and 1.0 means perfect
+detection. The 95\% confidence intervals are computed by bootstrap resampling over the start--goal pairs.
 
-\textbf{Gate analysis.} Among each decision point's recorded candidates, plain selection takes the lowest imagined
-cost; a gate first rejects the 30\% least trusted candidates (by their worst step) and then takes the lowest imagined
-cost. The outcome is whether the chosen candidate succeeds in the simulator. We compare every trust score with a random
-gate and an oracle gate that rejects by the true error.
+\textbf{Gate test.} For each start--goal pair we take the recorded plans, remove the 30\% least trusted ones, and choose
+the plan with the lowest imagined cost. We then check whether this plan succeeds in the simulator. For comparison we
+also remove plans at random, and with an ``oracle'' that knows the true errors.
 
 % ======================================================================
 \section{Results}
@@ -249,116 +233,109 @@ gate and an oracle gate that rejects by the true error.
 \subsection{Q1: Reproduction of DINO-WM}
 
 \begin{table}[t]
-\caption{Planning success over 50 start/goal pairs per seed (mean $\pm$ SD over seeds).}
+\caption{Planning success over 50 start--goal pairs per seed (mean $\pm$ standard deviation over seeds).}
 \label{tab:phase0}
 \centering
 \setlength{\tabcolsep}{3pt}
 \resizebox{\columnwidth}{!}{\input{generated/tab_phase0}}
 \end{table}
 
-Table~\ref{tab:phase0} and Fig.~\ref{fig:bars} summarise the reproduction. On Push-T we obtain \PushTRoneMean{}~$\pm$~\PushTRoneSD{} after one
-plan and \PushTFinalMean{}~$\pm$~\PushTFinalSD{} after replanning (per seed \PushTPerSeedFinal{}), against the published
-0.86 and 0.90; at 50 pairs the binomial standard error is about 0.04, so both published values lie within the seed spread.
-PointMaze reaches \MazeFinalMean{} after round \MazeFinalRound{}, above the published 0.98. Wall reaches \WallFinalMean{}
-after round \WallFinalRound{} (per seed \WallPerSeedFinal{}; published 0.96). Its single-plan result,
-\WallRoneMean{}~$\pm$~\WallRoneSD{}, is consistently below the published 0.74; the most likely cause is that the upstream
-Wall setting stops CEM after 10 iterations. Replanning brings Wall to the published level. Fig.~\ref{fig:cem} shows that on
-Push-T the success of CEM's current plan rises steeply in the first ten iterations and plateaus after about twenty.
-
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_success_bars.pdf}
-\caption{Planning success after one plan and after replanning: ours (blue, mean $\pm$ SD over seeds) against the
-published DINO-WM results (grey).}
+\caption{Planning success after one plan and after replanning: ours (blue, mean $\pm$ standard deviation over seeds)
+and the published DINO-WM results (grey).}
 \label{fig:bars}
 \end{figure}
+
+Table~\ref{tab:phase0} and Fig.~\ref{fig:bars} show the results. After replanning, our success rates match the
+published ones: \PushTFinalMean{} against 0.90 on Push-T, \WallFinalMean{} against 0.96 on Wall, and \MazeFinalMean{}
+against 0.98 on PointMaze. With a single plan, Push-T (\PushTRoneMean{}) and PointMaze (\MazeRoneMean{}) are slightly
+above the published values. Wall with a single plan is lower (\WallRoneMean{} against 0.74), consistently over the
+three seeds; replanning brings it to the published level. Fig.~\ref{fig:cem} shows how the planner improves its plan
+over the CEM iterations: most of the gain comes in the first ten iterations.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_cem.pdf}
-\caption{Push-T, first plan: success rate of CEM's current mean plan after each iteration (evaluation only; the planner
-never sees it). Grey: seeds; blue: mean; dashed: published single-plan result.}
+\caption{Push-T: success rate of the planner's current plan after each CEM iteration, for each seed (grey) and on
+average (blue). Dashed: published result for a single plan.}
 \label{fig:cem}
 \end{figure}
 
-\subsection{Q2: Do trust scores predict real error?}
+\subsection{Q2: Which trust score detects wrong predictions?}
 
 \begin{table}[t]
-\caption{AUROC for the top-10\% real latent error (per step), \HEpisodes{} Push-T decision points, \HSeedWord{}.}
+\caption{How well each score detects the 10\% most wrong imagined steps (AUROC; 0.5 = random guessing), \HEpisodes{}
+Push-T start--goal pairs, \HSeedWord{}.}
 \label{tab:h1}
 \centering
 \setlength{\tabcolsep}{4pt}
-\resizebox{\columnwidth}{!}{\input{generated/tab_h1}}
+\input{generated/tab_h1}
 \end{table}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_auroc.pdf}
-\caption{AUROC with 95\% bootstrap intervals over decision points. Blue: trust scores; grey: baselines;
-dashed: chance.}
+\caption{AUROC of each score with its 95\% confidence interval. Blue: trust scores; grey: baselines; dashed line: random
+guessing.}
 \label{fig:auroc}
 \end{figure}
 
-Table~\ref{tab:h1} and Fig.~\ref{fig:auroc} give the answer. MC-dropout ranks the unreliable steps highest, with AUROC
-\HMC{} (95\% CI \HMCCI{}; per seed \HMCPerSeed{}), and its whole interval lies above the trivial baseline (\HDist{},
-\HDistCI{}) and the random score (\HRand{}). It is the only score that meets the criterion of Q2, and it does so on every
-seed. Action perturbation (\HAct{}) and distance to the training data (\HKnn{}) carry some signal but less than the
-trivial baseline. The plan's own imagined cost carries none (\HCost{}): a confident planner is no evidence of a correct
-imagination. Image perturbation is at chance (\HObs{}), most likely because small noise on the input image is absorbed by the frozen
-encoder, so it probes the encoder rather than the predictor. The strength of the trivial baseline is itself
-informative: plans that change the scene a lot are the ones the model gets wrong, so every trust score must be compared
-with it, not only with chance. A rank average of MC-dropout and the trivial baseline, fixed in advance, does not improve
-on MC-dropout alone.
+Table~\ref{tab:h1} and Fig.~\ref{fig:auroc} show the results. \textbf{MC-dropout is the best score}, with an AUROC of
+\HMC{} (95\% interval \HMCCI{}). It is better than random guessing (\HRand{}) and better than the simple baseline
+(\HDist{}), and this holds on each of the three seeds (\HMCPerSeed{}). The simple baseline is surprisingly strong:
+plans that move the scene a lot are more often predicted wrongly. This is why a useful trust score must beat this
+baseline, not only random guessing. Action perturbation (\HAct{}) and distance to the training data (\HKnn{}) carry
+some information but less than the baseline. The planner's own imagined cost carries none (\HCost{}): a plan that
+\emph{looks} good to the planner is not more likely to be predicted correctly. Image perturbation is at the level of
+random guessing (\HObs{}), most likely because the image encoder ignores small changes to the input image.
 
-\subsection{Q3: Gate analysis}
+\subsection{Q3: Does removing untrusted plans help?}
 
 \begin{table}[t]
-\caption{Gate analysis on recorded candidates (reject 30\%, then lowest imagined cost), \HEpisodes{} decision points.}
+\caption{Success of the chosen plan after removing 30\% of the recorded plans, \HEpisodes{} start--goal pairs.}
 \label{tab:gate}
 \centering
 \input{generated/tab_gate}
 \end{table}
 
-Table~\ref{tab:gate} shows the result. The plan chosen without a gate succeeds in \GatePlain{} of decision points, and
-\GateMC{} with the MC-dropout gate; one decision point is worth \GateStep{}, so the differences between gates are within
-noise. The key row is the oracle: even rejecting by the \emph{true} error barely changes success (\GateOracle{} against
-\GatePlain{}). Among the recorded candidates, the one with the lowest imagined cost is rarely a high-error one, so a
-filter applied once, at the final selection, has little to change. Detecting error (Q2) is therefore necessary but not
-sufficient: the benefit of a trust gate has to come from changing which candidates CEM refits to in every iteration
-and round, as in Algorithm~\ref{alg:scope}, and from conditions where the model is wrong more often.
+Table~\ref{tab:gate} shows the result. Without removal, the chosen plan succeeds for \GatePlain{} of the start--goal
+pairs; with MC-dropout removal, for \GateMC{}. One pair corresponds to \GateStep{}, so these differences are within
+noise. Even the oracle, which knows the true errors, only reaches \GateOracle{}. The reason is that the plan with the
+lowest imagined cost is rarely one of the badly predicted plans, so removing plans at the very end changes little.
+Detecting wrong predictions is therefore necessary but not enough: to improve success, the trust check has to guide the
+whole search, in every CEM iteration and every round, as in Algorithm~\ref{alg:scope}.
 
 % ======================================================================
 \section{Discussion and Limitations}
 
-The results support the central premise of SCoPe: the frozen world model's own dropout already carries a reliable
-signal of where its imagination is wrong, at no training cost and four extra predictor passes per candidate. They also
-show two things that a gate design must respect. First, a trivial score based on how far the imagined state moves is a
-strong baseline (AUROC \HDist{}), so a trust score that only beats chance proves little. Second, filtering the final
-candidates is not enough, even with perfect knowledge of the error.
+The results support the main idea of SCoPe: the world model's own dropout already shows where its predictions are
+unreliable, at the cost of four extra predictions per plan and with no training. They also give two lessons for
+designing such a check. First, a trust score must be compared with a simple baseline, not only with random guessing.
+Second, filtering plans only at the final choice is not enough.
 
-The trust scores and the gate were evaluated on Push-T, with candidates taken from CEM's first plan. All tasks are
-simulated and 2-D; real-world use would require a backbone such as V-JEPA~2-AC with robot data. Planning takes minutes
-per decision on our GPU, so the system is not real-time. Upstream MPC stops solved episodes using the simulator's success
-flag; we keep this identical for every method.
+The trust scores and the gate test use the Push-T task. All tasks are simulated, and planning takes minutes per
+decision on our GPU, so the system does not yet run in real time. Using it on a real robot would require a world model
+trained on robot data, such as V-JEPA~2-AC~\cite{ref2}.
 
 % ======================================================================
 \section{Conclusion}
 
-We built SCoPe, a trust check for latent planning with frozen JEPA world models, and evaluated it on top of a verified
-reproduction of DINO-WM. The reproduction matches the published success on Push-T (\PushTFinalMean{}) and Wall
-(\WallFinalMean{}) and exceeds it on PointMaze (\MazeFinalMean{}), on an 8\,GB GPU and 3.8$\times$ faster than the
-unmodified code. Across \HPairs{} imagined steps checked against the simulator, an untrained MC-dropout score detects
-the most wrong predictions at AUROC \HMC{}, clearly above random and above a strong trivial baseline on every seed,
-while the planner's own cost carries no such signal. The gate analysis shows that this signal must be used inside the
-search, not only at the final choice.
+We presented SCoPe, a planner that checks the reliability of a world model's predictions before acting on them. We
+reproduced DINO-WM on a single 8\,GB GPU, with success rates of \PushTFinalMean{} on Push-T, \WallFinalMean{} on Wall and
+\MazeFinalMean{} on PointMaze, and made planning 3.8$\times$ faster. Across \HPairs{} imagined steps compared with the
+simulator, Monte-Carlo dropout detected the most wrong predictions with an AUROC of \HMC{}, better than random guessing
+and a simple baseline on every seed, while the planner's own confidence gave no such signal. Finally, we showed that the
+check must be used during the whole planning search rather than only at the final choice.
 
-\textbf{Future work.} Applying the gate inside every CEM iteration over several replanning rounds on all three tasks,
-an ensemble score and calibration of $\tau$, evaluation under visual shifts, and transfer to V-JEPA~2-AC.
+\textbf{Future work.} Using the trust check inside every CEM iteration on all three tasks, combining several scores,
+and testing under changed visual conditions.
 
 \section*{Reproducibility}
-Code, run scripts and the report sources are in the project repositories (scope-planning, scope-project,
-scope-mid-review). Every number in Tables~\ref{tab:phase0}--\ref{tab:gate} and in the text is generated from the run logs
-by \texttt{report/make\_assets.py}.
+The code, run scripts and report sources are in the project repositories (scope-planning, scope-project,
+scope-mid-review). Every number in the tables and text is generated from the run logs by
+\texttt{report/make\_assets.py}.
 
 \balance
 \input{generated/refs}

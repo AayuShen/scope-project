@@ -86,8 +86,8 @@ for env in ["pusht", "wall", "point_maze"]:
     + "\n".join(rows) + "\n\\bottomrule\n\\end{tabular}\n")
 
 # ---------------------------------------------------------------- H1 tables and macros
-ORDER = [("mc_dropout", "MC-dropout (4 passes)"), ("act_perturb", "Action perturbation"), ("knn", "Distance to training data"),
-         ("cost", "Imagined cost"), ("obs_perturb", "Image perturbation"), ("combo_mc_dist", "MC-dropout + distance (rank avg.)"),
+ORDER = [("mc_dropout", "MC-dropout"), ("act_perturb", "Action perturbation"), ("knn", "Distance to training data"),
+         ("cost", "Imagined cost"), ("obs_perturb", "Image perturbation"),
          ("dist_start", "Distance moved (baseline)"), ("random", "Random (baseline)")]
 ORDER = [(k, n) for k, n in ORDER if k in A]
 best = max(["mc_dropout", "act_perturb", "obs_perturb", "knn"], key=lambda k: A[k]["auroc"])
@@ -95,14 +95,13 @@ h_rows = []
 for k, n in ORDER:
     r = A[k]
     cell = lambda s: f"\\textbf{{{s}}}" if k == best else s  # noqa: E731
-    sp = "--" if r.get("spearman") is None else "${:.2f}$".format(r["spearman"] if abs(r["spearman"]) >= 0.005 else 0.0)
     if k == "dist_start":
         h_rows.append("\\midrule")
     au = "{:.3f}".format(r["auroc"])
     ci = "{:.2f}--{:.2f}".format(*r["auroc_ci"])
-    h_rows.append(f"{cell(n)} & {cell(au)} & {cell(ci)} & {cell(sp)} \\\\")
+    h_rows.append(f"{cell(n)} & {cell(au)} & {cell(ci)} \\\\")
 (GEN / "tab_h1.tex").write_text(
-    "\\begin{tabular}{@{}lccc@{}}\n\\toprule\nTrust score & AUROC & 95\\% CI & Spearman $\\rho$ \\\\\n\\midrule\n"
+    "\\begin{tabular}{@{}lcc@{}}\n\\toprule\nTrust score & AUROC & 95\\% interval \\\\\n\\midrule\n"
     + "\n".join(h_rows) + "\n\\bottomrule\n\\end{tabular}\n")
 by_run = H.get("auroc_by_run", {})
 mac("HSeeds", str(len(RUNS)))
@@ -126,11 +125,11 @@ else:
     for name in ("HMCPerSeed", "HMCSeedMin", "HMCSeedMax"):
         mac(name, one)
 pct = lambda v: f"{100 * v + 1e-9:.1f}".rstrip("0").rstrip(".") + "\\%"  # noqa: E731
-GATE_ROWS = [("plain (no gate)", "Plain (lowest imagined cost)"), ("oracle (true error)", "Oracle gate (true error)"),
-             ("random gate", "Random gate"), ("gate: mc_dropout", "MC-dropout gate"), ("gate: act_perturb", "Action-perturbation gate"),
-             ("gate: knn", "Distance-to-data gate"), ("gate: dist_start", "Distance-moved gate")]
+GATE_ROWS = [("plain (no gate)", "No removal"), ("oracle (true error)", "Oracle (knows the true error)"),
+             ("random gate", "Random"), ("gate: mc_dropout", "MC-dropout"), ("gate: act_perturb", "Action perturbation"),
+             ("gate: knn", "Distance to training data"), ("gate: dist_start", "Distance moved")]
 (GEN / "tab_gate.tex").write_text(
-    "\\begin{tabular}{@{}lc@{}}\n\\toprule\nSelection among recorded candidates & Chosen plan succeeds \\\\\n\\midrule\n"
+    "\\begin{tabular}{@{}lc@{}}\n\\toprule\nPlans removed by & Chosen plan succeeds \\\\\n\\midrule\n"
     + "\n".join(f"{n} & {pct(GATE[k])} \\\\" for k, n in GATE_ROWS if k in GATE) + "\n\\bottomrule\n\\end{tabular}\n")
 mac("GatePlain", pct(GATE["plain (no gate)"]))
 mac("GateOracle", pct(GATE["oracle (true error)"]))
