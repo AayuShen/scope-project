@@ -50,7 +50,7 @@ We are **not training** the world model: every result uses the DINO-WM authors' 
 
 | What | Where |
 |---|---|
-| **The final report (IEEE conference paper, PDF)** | [SCoPe_final_report.pdf](SCoPe_final_report.pdf) (LaTeX sources in [report/](report/)) |
+| **The whole project explained step by step** | [SCoPe_project_guide.pdf](SCoPe_project_guide.pdf) ([Word version](SCoPe_project_guide.docx)) |
 | The deck we present (8 slides, PDF) | [scope-mid-review/SCoPe_mid_review.pdf](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_mid_review.pdf) |
 | What to say on each slide (about 10 minutes) | [scope-mid-review/SCoPe_speaker_script.txt](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_speaker_script.txt) |
 | Backup deck with every detail (38 slides, PDF) | [scope-mid-review/SCoPe_mid_review_extended.pdf](https://github.com/AayuShen/scope-mid-review/blob/main/SCoPe_mid_review_extended.pdf) |
